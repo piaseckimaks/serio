@@ -7,6 +7,8 @@ export function useSerialPorts() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Whether at least one scan has completed (successfully or not). */
+  const [scanned, setScanned] = useState(false);
   const inFlight = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -21,6 +23,7 @@ export function useSerialPorts() {
     } finally {
       inFlight.current = false;
       setLoading(false);
+      setScanned(true);
     }
   }, []);
 
@@ -31,5 +34,5 @@ export function useSerialPorts() {
     return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
 
-  return { ports, loading, error, refresh };
+  return { ports, loading, scanned, error, refresh };
 }

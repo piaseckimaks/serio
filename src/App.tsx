@@ -1,12 +1,20 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { ConnectionBar } from "./components/ConnectionBar";
+import { ProfilePicker } from "./components/ProfilePicker";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalPane, type TerminalHandle } from "./components/TerminalPane";
 import { Toolbar } from "./components/Toolbar";
+import { useProfiles } from "./hooks/useProfiles";
 import { useSerialConnection } from "./hooks/useSerialConnection";
 import { useSerialPorts } from "./hooks/useSerialPorts";
 import { useSessionLog } from "./hooks/useSessionLog";
+import {
+  findMatchingProfile,
+  loadLastSettings,
+  saveLastSettings,
+  suggestProfileName,
+} from "./lib/profiles";
 import { DEFAULT_RX_FORMAT, type RxFormatOptions } from "./lib/rxFormat";
 import { DEFAULT_CONFIG, type LineEnding, type SerialConfig } from "./types/serial";
 
@@ -21,11 +29,14 @@ function defaultLogName(now: Date): string {
 export default function App() {
   const portsApi = useSerialPorts();
   const conn = useSerialConnection();
+  const profilesApi = useProfiles();
   const terminal = useRef<TerminalHandle>(null);
-  const [draft, setDraft] = useState<SerialConfig>(DEFAULT_CONFIG);
+  // Restore what was used last time; profiles are explicit snapshots on top.
+  const [last] = useState(() => loadLastSettings(profilesApi.storage));
+  const [draft, setDraft] = useState<SerialConfig>(last?.config ?? DEFAULT_CONFIG);
   const [customPath, setCustomPath] = useState(false);
-  const [lineEnding, setLineEnding] = useState<LineEnding>("crlf");
-  const [format, setFormat] = useState<RxFormatOptions>(DEFAULT_RX_FORMAT);
+  const [lineEnding, setLineEnding] = useState<LineEnding>(last?.lineEnding ?? "crlf");
+  const [format, setFormat] = useState<RxFormatOptions>(last?.format ?? DEFAULT_RX_FORMAT);
   const log = useSessionLog();
   const [logIncludeTx, setLogIncludeTx] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -36,10 +47,24 @@ export default function App() {
     setDraft((d) => ({ ...d, path: portsApi.ports[0].path }));
   }, [portsApi.ports, draft.path, customPath]);
 
+  // A remembered or profile path that the OS does not list (a pty, an
+  // unplugged adapter) is shown in the free-text field rather than silently
+  // replaced by the first enumerated port.
+  useEffect(() => {
+    if (customPath || !portsApi.scanned || portsApi.loading || !draft.path) return;
+    if (!portsApi.ports.some((p) => p.path === draft.path)) setCustomPath(true);
+  }, [portsApi.ports, portsApi.scanned, portsApi.loading, draft.path, customPath]);
+
   // If the backend reports an existing connection (dev reload), show its settings.
   useEffect(() => {
     if (conn.config) setDraft(conn.config);
   }, [conn.config]);
+
+  useEffect(() => {
+    saveLastSettings(profilesApi.storage, { config: draft, lineEnding, format });
+  }, [profilesApi.storage, draft, lineEnding, format]);
+
+  const activeProfile = findMatchingProfile(profilesApi.profiles, draft, lineEnding);
 
   const startLog = async () => {
     setDialogError(null);
@@ -63,6 +88,21 @@ export default function App() {
   return (
     <div className="app">
       <ConnectionBar
+        leading={
+          <ProfilePicker
+            profiles={profilesApi.profiles}
+            activeName={activeProfile?.name ?? ""}
+            suggestedName={suggestProfileName(draft)}
+            disabled={conn.state !== "disconnected"}
+            onSelect={(profile) => {
+              setDraft(profile.config);
+              setLineEnding(profile.lineEnding);
+              setCustomPath(!portsApi.ports.some((p) => p.path === profile.config.path));
+            }}
+            onSave={(name) => profilesApi.save({ name, config: draft, lineEnding })}
+            onDelete={(name) => profilesApi.remove(name)}
+          />
+        }
         ports={portsApi.ports}
         portsLoading={portsApi.loading}
         onRefresh={() => void portsApi.refresh()}
