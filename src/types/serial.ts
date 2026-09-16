@@ -61,6 +61,20 @@ export interface ErrorEventPayload {
   message: string;
 }
 
+/** Session log settings; mirrors `LogOptions` in the core crate. */
+export interface LogOptions {
+  path: string;
+  /** Also record bytes sent to the device, interleaved with received ones. */
+  includeTx: boolean;
+  append: boolean;
+}
+
+export interface LogStatus {
+  path: string;
+  includeTx: boolean;
+  bytesWritten: number;
+}
+
 /** What is appended in place of Enter before sending. */
 export type LineEnding = "none" | "cr" | "lf" | "crlf";
 

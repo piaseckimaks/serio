@@ -4,10 +4,17 @@
 //! `close_port` can block for up to one read timeout. Async commands that
 //! borrow `State` must return a `Result`.
 
+use std::sync::Arc;
+
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-use serio_serial::{ErrorKind, PortInfo, PortStatus, SerialConfig, SerialError, SerialManager};
-use tauri::State;
+use serio_serial::{
+    ErrorKind, LogOptions, LogStatus, PortInfo, PortStatus, SerialConfig, SerialError,
+    SerialManager, SessionLog,
+};
+use tauri::{AppHandle, State};
+
+use crate::events::emit_log_error;
 
 #[tauri::command]
 pub async fn list_ports() -> Result<Vec<PortInfo>, SerialError> {
@@ -39,10 +46,13 @@ pub async fn close_port(manager: State<'_, SerialManager>) -> Result<bool, Seria
     Ok(manager.close())
 }
 
-/// `data` is base64-encoded.
+/// `data` is base64-encoded. Sent bytes are recorded in the session log
+/// after a successful write; a log failure does not fail the write.
 #[tauri::command]
 pub async fn write_bytes(
+    app: AppHandle,
     manager: State<'_, SerialManager>,
+    log: State<'_, Arc<SessionLog>>,
     data: String,
 ) -> Result<(), SerialError> {
     let bytes = STANDARD.decode(data.as_bytes()).map_err(|e| {
@@ -51,7 +61,11 @@ pub async fn write_bytes(
             format!("payload is not base64: {e}"),
         )
     })?;
-    manager.write(&bytes)
+    manager.write(&bytes)?;
+    if let Err(err) = log.record_tx(&bytes) {
+        emit_log_error(&app, err.message);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -59,4 +73,23 @@ pub async fn port_status(
     manager: State<'_, SerialManager>,
 ) -> Result<Option<PortStatus>, SerialError> {
     Ok(manager.status())
+}
+
+#[tauri::command]
+pub async fn start_log(
+    log: State<'_, Arc<SessionLog>>,
+    options: LogOptions,
+) -> Result<LogStatus, SerialError> {
+    log.start(options)
+}
+
+/// Resolves to the final status, or `null` when no log was open.
+#[tauri::command]
+pub async fn stop_log(log: State<'_, Arc<SessionLog>>) -> Result<Option<LogStatus>, SerialError> {
+    log.stop()
+}
+
+#[tauri::command]
+pub async fn log_status(log: State<'_, Arc<SessionLog>>) -> Result<Option<LogStatus>, SerialError> {
+    Ok(log.status())
 }

@@ -15,7 +15,7 @@ pub enum ErrorKind {
     PermissionDenied,
     /// Another process holds the port.
     Busy,
-    /// `open` was called while a port is already open.
+    /// `open` was called while a port (or a session log) is already open.
     AlreadyOpen,
     /// An operation needing an open port was called while disconnected.
     NotOpen,
@@ -77,6 +77,13 @@ impl SerialError {
             ),
             _ => Self::new(ErrorKind::Io, description),
         }
+    }
+}
+
+impl SerialError {
+    /// Like `From<io::Error>`, but names the file involved.
+    pub fn from_io_with_context(err: io::Error, path: &std::path::Path) -> Self {
+        Self::from_io_parts(err.kind(), &format!("{}: {err}", path.display()))
     }
 }
 

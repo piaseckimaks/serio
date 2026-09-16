@@ -297,6 +297,25 @@ button.segment[aria-pressed="true"] {
   flex: 1;
 }
 
+.status-log {
+  color: var(--accent);
+}
+
+.toolbar-log {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-log .log-path {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .state-pill {
   display: inline-flex;
   align-items: center;
