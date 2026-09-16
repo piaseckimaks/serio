@@ -1,20 +1,31 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { fromBase64 } from "../lib/bytes";
 import { applyLineEnding } from "../lib/lineEnding";
+import { RxFormatter, type RxFormatOptions } from "../lib/rxFormat";
 import { EVENTS } from "../lib/tauri";
 import type { DataEventPayload, LineEnding } from "../types/serial";
 
 interface Props {
   connected: boolean;
   lineEnding: LineEnding;
+  /** How received bytes are rendered (text/hex, timestamps). */
+  format: RxFormatOptions;
   /** Bytes to send to the port (already line-ending translated). */
   onInput: (bytes: Uint8Array) => void;
   /** Called with the byte count of every received chunk. */
   onReceived: (count: number) => void;
 }
+
+export interface TerminalHandle {
+  /** Wipe the screen and scrollback and restart the hex offset. */
+  clear: () => void;
+}
+
+/** How long a partial hex line waits for more bytes before being shown. */
+const HEX_FLUSH_DELAY_MS = 100;
 
 const THEME = {
   background: "#0b1120",
@@ -40,9 +51,14 @@ const THEME = {
   brightWhite: "#f8fafc",
 };
 
-export function TerminalPane({ connected, lineEnding, onInput, onReceived }: Props) {
+export const TerminalPane = forwardRef<TerminalHandle, Props>(function TerminalPane(
+  { connected, lineEnding, format, onInput, onReceived },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const formatterRef = useRef(new RxFormatter(format));
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Latest props, readable from the long-lived xterm callbacks.
   const connectedRef = useRef(connected);
@@ -53,6 +69,26 @@ export function TerminalPane({ connected, lineEnding, onInput, onReceived }: Pro
   lineEndingRef.current = lineEnding;
   onInputRef.current = onInput;
   onReceivedRef.current = onReceived;
+
+  const flushPending = () => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    const formatter = formatterRef.current;
+    if (formatter.hasPending) termRef.current?.write(formatter.flush());
+  };
+
+  const clear = () => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    formatterRef.current.reset();
+    termRef.current?.reset();
+  };
+
+  useImperativeHandle(ref, () => ({ clear }), []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -94,8 +130,13 @@ export function TerminalPane({ connected, lineEnding, onInput, onReceived }: Pro
     const sub = { disposed: false, unlisten: null as UnlistenFn | null };
     void listen<DataEventPayload>(EVENTS.data, (event) => {
       const bytes = fromBase64(event.payload.data);
-      term.write(bytes);
+      const formatter = formatterRef.current;
+      term.write(formatter.push(bytes));
       onReceivedRef.current(bytes.length);
+      // A short message in hex mode would otherwise sit unseen until the
+      // line fills; show it once the stream goes quiet.
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushTimer.current = formatter.hasPending ? setTimeout(flushPending, HEX_FLUSH_DELAY_MS) : null;
     }).then((unlisten) => {
       if (sub.disposed) unlisten();
       else sub.unlisten = unlisten;
@@ -105,6 +146,7 @@ export function TerminalPane({ connected, lineEnding, onInput, onReceived }: Pro
     return () => {
       sub.disposed = true;
       sub.unlisten?.();
+      if (flushTimer.current) clearTimeout(flushTimer.current);
       inputSub.dispose();
       observer.disconnect();
       term.dispose();
@@ -114,7 +156,14 @@ export function TerminalPane({ connected, lineEnding, onInput, onReceived }: Pro
 
   useEffect(() => {
     if (connected) termRef.current?.focus();
+    else flushPending();
   }, [connected]);
+
+  // Switching text/hex clears the screen: the two views are not continuous.
+  useEffect(() => {
+    flushPending();
+    if (formatterRef.current.setOptions(format)) termRef.current?.reset();
+  }, [format.mode, format.timestamps]);
 
   return (
     <div className="terminal-pane" data-connected={connected}>
@@ -126,4 +175,4 @@ export function TerminalPane({ connected, lineEnding, onInput, onReceived }: Pro
       )}
     </div>
   );
-}
+});
