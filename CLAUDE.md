@@ -6,16 +6,26 @@ Tauri 2 (Rust) + React 18 + TypeScript + Vite, xterm.js for the terminal pane, p
 ## Layout
 
 - `src/` React frontend
-  - `components/` ConnectionBar (port picker + settings + Connect), TerminalPane (xterm.js), StatusBar
-  - `hooks/` `useSerialPorts` (enumeration), `useSerialConnection` (lifecycle, RX/TX counters)
+  - `components/` ConnectionBar (port picker + settings + Connect, with a `leading` slot for
+    ProfilePicker), Toolbar (Text/Hex, Timestamps, Clear, logging), TerminalPane (xterm.js,
+    exposes `clear()` via ref), StatusBar
+  - `hooks/` `useSerialPorts` (enumeration), `useSerialConnection` (lifecycle, RX/TX counters),
+    `useSessionLog` (log lifecycle, polls the byte count), `useProfiles` (localStorage-backed)
   - `lib/tauri.ts` typed `invoke` wrappers and event names; `lib/bytes.ts` base64;
-    `lib/lineEnding.ts` Enter translation (unit tests in `lib/__tests__`)
+    `lib/lineEnding.ts` Enter translation; `lib/rxFormat.ts` `RxFormatter` (text/hex dump,
+    per-line timestamps, stateful across chunks); `lib/profiles.ts` validated JSON store for
+    profiles and last-used settings (unit tests in `lib/__tests__`)
   - `types/serial.ts` mirrors the Rust serde contract (camelCase)
 - `src-tauri/` Tauri app, thin glue only
-  - `src/commands.rs` `list_ports`, `open_port`, `close_port`, `write_bytes`, `port_status`
-  - `src/events.rs` forwards core events as `serial:data` / `serial:closed` / `serial:error`
+  - `src/commands.rs` `list_ports`, `open_port`, `close_port`, `write_bytes`, `port_status`,
+    `start_log`, `stop_log`, `log_status`
+  - `src/events.rs` forwards core events as `serial:data` / `serial:closed` / `serial:error`,
+    records RX batches into the `SessionLog` first, emits `serial:log-error` if that fails
+  - `capabilities/default.json` grants `core:default` and `dialog:allow-save` (save dialog for
+    the log file, via `tauri-plugin-dialog`)
   - `crates/serial-core/` the `serio-serial` crate: enumeration, `SerialManager`, reader
-    thread, `Transport` trait, mock transport, pty integration test, `cat` example
+    thread, `Transport` trait, mock transport, `SessionLog` (file logging), pty integration
+    test, `cat` example
 
 ## Architecture rules
 
@@ -28,6 +38,10 @@ Tauri 2 (Rust) + React 18 + TypeScript + Vite, xterm.js for the terminal pane, p
   would emit number arrays).
 - Line endings are translated only in `src/lib/lineEnding.ts`; the backend is byte-transparent.
   xterm.js reports Enter as `\r`.
+- Display formatting (hex, timestamps) happens only in `src/lib/rxFormat.ts`, in the frontend.
+  The session log always receives the raw bytes, never the formatted view.
+- The session log is independent of the connection and never changes `SerialEvent`; the Tauri
+  sink and `write_bytes` feed it.
 - Tauri commands are `async fn` returning `Result<_, SerialError>`; `SerialError` serializes
   as `{ kind, message }`.
 - The `udev` feature (default on the app, off on the core crate) enables libudev enumeration;
@@ -51,6 +65,8 @@ via "Other path…", talk to the other with `cat` / `echo` / `xxd` (details in R
 
 - Rust: rustfmt, clippy clean with `-D warnings` on the core crate, edition 2021.
 - TypeScript: strict, no unused locals; keep helpers pure and unit-tested with vitest.
-- Keep the MVP scope focused; planned features (hex view, timestamps, session logging,
-  saved profiles) should slot in without changing the core crate's event contract.
+- New features should slot in without changing the core crate's event contract.
+- The Tauri crate (`src-tauri/src`) cannot be compiled on a machine without webkit2gtk; keep
+  its changes small and use only well-known Tauri APIs, and put anything testable in the core
+  crate or the frontend.
 - See `docs/HANDOFF.md` for current status and open items.

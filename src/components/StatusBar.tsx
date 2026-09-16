@@ -1,10 +1,11 @@
-import { framing, type ConnectionState, type SerialConfig } from "../types/serial";
+import { framing, type ConnectionState, type LogStatus, type SerialConfig } from "../types/serial";
 
 interface Props {
   state: ConnectionState;
   config: SerialConfig | null;
   rxBytes: number;
   txBytes: number;
+  log: LogStatus | null;
   error: string | null;
 }
 
@@ -20,7 +21,13 @@ function formatBytes(count: number): string {
   return `${(count / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-export function StatusBar({ state, config, rxBytes, txBytes, error }: Props) {
+/** Last path component, for compact display. */
+export function baseName(path: string): string {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+export function StatusBar({ state, config, rxBytes, txBytes, log, error }: Props) {
   return (
     <footer className="status-bar">
       <span className={`state-pill state-${state}`}>{STATE_LABEL[state]}</span>
@@ -36,6 +43,11 @@ export function StatusBar({ state, config, rxBytes, txBytes, error }: Props) {
         </span>
       )}
       <span className="status-spacer" />
+      {log && (
+        <span className="status-item mono status-log" title={`Logging to ${log.path}`}>
+          ● {baseName(log.path)} {formatBytes(log.bytesWritten)}
+        </span>
+      )}
       <span className="status-item mono" title="Bytes received">
         RX {formatBytes(rxBytes)}
       </span>

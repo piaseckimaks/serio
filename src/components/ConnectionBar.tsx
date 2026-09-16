@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { type ReactNode, useId } from "react";
 import { LINE_ENDING_LABELS } from "../lib/lineEnding";
 import {
   BAUD_RATES,
@@ -15,6 +15,8 @@ import {
 const CUSTOM_PATH = "__custom__";
 
 interface Props {
+  /** Rendered before the port field (the profile picker). */
+  leading?: ReactNode;
   ports: PortInfo[];
   portsLoading: boolean;
   onRefresh: () => void;
@@ -36,6 +38,7 @@ function portLabel(port: PortInfo): string {
 }
 
 export function ConnectionBar({
+  leading,
   ports,
   portsLoading,
   onRefresh,
@@ -67,6 +70,7 @@ export function ConnectionBar({
 
   return (
     <header className="connection-bar">
+      {leading}
       <div className="field field-port">
         <label htmlFor={`${id}-port`}>Port</label>
         <div className="port-row">

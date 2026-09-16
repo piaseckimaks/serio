@@ -1,13 +1,22 @@
 // Typed wrappers over the Tauri IPC surface defined in src-tauri/src/commands.rs.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { PortInfo, PortStatus, SerialConfig, SerialError } from "../types/serial";
+import type {
+  LogOptions,
+  LogStatus,
+  PortInfo,
+  PortStatus,
+  SerialConfig,
+  SerialError,
+} from "../types/serial";
 import { toBase64 } from "./bytes";
 
 export const EVENTS = {
   data: "serial:data",
   closed: "serial:closed",
   error: "serial:error",
+  /** The session log hit a write error and closed itself. */
+  logError: "serial:log-error",
 } as const;
 
 export function listPorts(): Promise<PortInfo[]> {
@@ -29,6 +38,19 @@ export function writeBytes(bytes: Uint8Array): Promise<void> {
 
 export function portStatus(): Promise<PortStatus | null> {
   return invoke<PortStatus | null>("port_status");
+}
+
+export function startLog(options: LogOptions): Promise<LogStatus> {
+  return invoke<LogStatus>("start_log", { options });
+}
+
+/** Resolves to the final status, or `null` when no log was open. */
+export function stopLog(): Promise<LogStatus | null> {
+  return invoke<LogStatus | null>("stop_log");
+}
+
+export function logStatus(): Promise<LogStatus | null> {
+  return invoke<LogStatus | null>("log_status");
 }
 
 /** Normalize whatever `invoke` rejected with into a `SerialError`. */
