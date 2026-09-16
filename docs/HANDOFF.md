@@ -1,69 +1,88 @@
 # Handoff
 
-Last updated: 2026-09-16, branch `claude/serial-terminal-ui-awusv3`.
+Last updated: 2026-09-16, branch `claude/handoff-continuation-5qmlrl`.
 
 ## Where things stand
 
-The repository started empty. Commit `28db0e4` bootstrapped the whole MVP:
+Everything in the original plan is implemented and committed on this branch:
 
-- `serio-serial` core crate with port enumeration, `SerialManager`, batching reader thread,
-  mock-based unit tests, a pty round-trip integration test and a `cat` example.
-- Tauri glue (five commands, three events, capabilities, config, placeholder icons).
-- React frontend: connection bar, xterm.js terminal pane, status bar, vitest tests for the
-  pure helpers.
-- README with prerequisites, verification commands and a socat smoke test.
+| Commit | What |
+| --- | --- |
+| `28db0e4` | Bootstrap: core crate, Tauri glue, React frontend, README |
+| `af844bd` | `pnpm-lock.yaml` and `Cargo.lock` |
+| `9c24c3a` | Clippy fix (unused import) |
+| `c659a16` | Hex view, per-line timestamps, Clear button (`src/lib/rxFormat.ts`, `Toolbar`) |
+| `54d0b49` | Session logging (`SessionLog` in the core crate, `start_log`/`stop_log`/`log_status`, `tauri-plugin-dialog`) |
+| `6dc011f` | Saved profiles and last-used settings (`src/lib/profiles.ts`, `ProfilePicker`) |
 
-## What is NOT verified yet, and why
+The `claude/serial-terminal-ui-awusv3` branch only adds `CLAUDE.md` and the first version
+of this file on top of the bootstrap; both were cherry-picked here, so this branch supersedes it.
 
-The session that wrote this ran in the Claude Code environment named "Default", which has
-no network access. npm, crates.io and GitHub all returned `Host not in allowlist`. So none
-of this has been run:
+## What has been verified
 
-- `pnpm install`, `pnpm typecheck`, `pnpm test`, `pnpm build`
-- `cargo test -p serio-serial --no-default-features`, clippy
-- `cargo check` on the Tauri crate, `pnpm tauri dev`
+This session had network access, so the previously unverified list is now checked:
 
-What was checked: every Rust file parses and is rustfmt-clean, every TypeScript file
-transpiles (bun), JSON configs are valid, and the pure helpers pass equivalent tests under
-bun's runner. Expect small compile or type errors on the first real run; none of the code
-has been through a compiler.
+- `pnpm install`, `pnpm typecheck`, `pnpm test` (28 tests in 4 files), `pnpm build`: all pass.
+- `cargo test -p serio-serial --no-default-features`: 23 unit tests + 2 pty tests pass.
+- `cargo clippy -p serio-serial --no-default-features --all-targets -- -D warnings` and
+  `cargo fmt --check`: clean.
+- `cargo check` on the Tauri crate fails only in `gdk-sys`'s build script (no GTK on the
+  machine), exactly as predicted; it never reaches our code.
 
-To unblock in Claude Code on the web: edit the environment (or create one) with network
-access that allows at least `registry.npmjs.org`, `index.crates.io`, `static.crates.io`.
-Changes apply to new sessions only.
+## What is NOT verified, and why
+
+The container has no webkit2gtk/GTK and no display, so nothing in `src-tauri/src` has been
+compiled, and the app has never been run. Those files were kept small and rustfmt-clean, and
+they only use standard Tauri 2 APIs, but expect to touch them on the first real build:
+
+- `src-tauri/src/lib.rs`: `.plugin(tauri_plugin_dialog::init())`, `app.manage(Arc<SessionLog>)`.
+- `src-tauri/src/events.rs`: `TauriSink` now holds `Arc<SessionLog>` and calls
+  `record_rx` before emitting `serial:data`; `emit_log_error` emits `serial:log-error`.
+- `src-tauri/src/commands.rs`: `write_bytes` takes `AppHandle` and `State<Arc<SessionLog>>`
+  (injected, not IPC args); `start_log`, `stop_log`, `log_status`.
+- `src-tauri/capabilities/default.json`: `dialog:allow-save`. If the save dialog is refused
+  at runtime, the permission identifier is the first thing to check.
+- Frontend: `@tauri-apps/plugin-dialog` `save()` in `App.tsx` (`startLog`).
 
 ## First thing to do in the next session
 
-1. Probe the three hosts with curl; stop and report if any still returns 403.
-2. `pnpm install`, then `pnpm typecheck`, `pnpm test`, `pnpm build`. Fix type errors in
-   `src/` (likely spots: the generic `update` helper in `ConnectionBar.tsx`, xterm theme
-   keys in `TerminalPane.tsx`, vitest config typing in `vite.config.ts`).
-3. `cd src-tauri && cargo test -p serio-serial --no-default-features`, then clippy with
-   `--all-targets -- -D warnings`. Likely spots: `serialport` API details (`Error::new`,
-   `TTYPort::pair`, `From<serialport::Error> for io::Error`), the `Transport` impl for
-   `Box<dyn SerialPort>`.
-4. `cargo check` in `src-tauri` will fail without webkit2gtk; confirm the only failure is a
-   build script in `webkit2gtk-sys`/`gtk-sys`, not our code. If the machine has the Tauri
-   prerequisites, run `pnpm tauri dev` and the socat smoke test from the README.
-5. Commit `pnpm-lock.yaml`, `src-tauri/Cargo.lock` and any fixes; push.
+1. On a machine with the Tauri prerequisites: `cd src-tauri && cargo check` (with
+   `--no-default-features` if `libudev-dev` is missing), fix whatever the compiler says in
+   the three glue files above, then `pnpm tauri dev`.
+2. Run the socat smoke test from the README, then: Hex + Timestamps toggles, Clear,
+   "Log to file…" (check `tail -f` on the file and the byte counter in the status bar),
+   "Stop log", save a profile, restart the app and confirm the last settings and the
+   profile come back.
+3. Check the toolbar and connection bar layout at the 640 px minimum window width; the
+   profile field is `flex: 0 1 300px` and may need to wrap earlier.
+
+## Design notes for the new features
+
+- `RxFormatter` (frontend) is stateful across chunks: text mode tracks "at line start"
+  even while timestamps are off, hex mode buffers a partial 16-byte line and keeps a running
+  offset. `TerminalPane` flushes a partial hex line after 100 ms of quiet and on disconnect.
+  Text-mode timestamps are inserted as `\r[HH:MM:SS.mmm] ` so LF-only devices still get the
+  stamp at column 0. Switching Text/Hex clears the screen.
+- `SessionLog` (core crate, `log.rs`) writes raw bytes and flushes on every record. TX bytes
+  are interleaved only when `includeTx` is set. A write failure closes the log and returns
+  the error once; the Tauri layer turns that into `serial:log-error`, and `useSessionLog`
+  shows it in the status bar. `append` is supported by the backend but the UI always
+  truncates (the OS dialog already confirms overwrites).
+- Profiles live in localStorage under `serio.profiles.v1`; last-used settings under
+  `serio.lastSettings.v1`. Both are validated on read and corrupt data is dropped. The
+  profile selection is derived by exact match against the current settings, so there is no
+  "dirty" state to track.
 
 ## Open items and placeholders
 
-- Icons in `src-tauri/icons` are generated placeholders (dark square, teal `>_`). Replace
-  with `pnpm tauri icon <1024px png>` once there is artwork.
-- App identifier is `xyz.piasecki.serio` in `src-tauri/tauri.conf.json`; change if wanted.
-- No license file or `license` field yet; the owner has not chosen one.
-- CSP is `null` in `tauri.conf.json` for the MVP; tighten later.
-- `pnpm-lock.yaml` and `Cargo.lock` are not committed yet (never generated).
-
-## Planned next features (agreed scope, in rough order)
-
-1. Hex view toggle and optional per-line timestamps in the terminal pane.
-2. Session logging to a file.
-3. Saved connection profiles.
-
-All three should be frontend/Tauri-layer additions; the core crate's `SerialEvent` contract
-should not need to change.
+- Icons in `src-tauri/icons` are generated placeholders. Replace with
+  `pnpm tauri icon <1024px png>` once there is artwork.
+- App identifier is `xyz.piasecki.serio`; change if wanted.
+- No license file or `license` field yet.
+- CSP is `null` in `tauri.conf.json`; tighten later.
+- Possible follow-ups, not started: a send-line input box (type a line, send with a chosen
+  ending) and hex input; local echo; log with timestamps or hex formatting (today the log is
+  always raw); an "append" choice in the UI; a lint setup (there is no eslint yet).
 
 ## Decisions already made (do not re-litigate)
 
@@ -71,3 +90,5 @@ should not need to change.
 - Serial logic isolated in a Tauri-free crate for testability.
 - Own `serialport` bindings via commands, not `tauri-plugin-serialplugin`.
 - Base64 for byte payloads over IPC; line endings translated only in the frontend.
+- The `SerialEvent` contract stays as is; logging and formatting hang off it from outside.
+- `tauri-plugin-dialog` for the save dialog (the only Tauri plugin in use).
