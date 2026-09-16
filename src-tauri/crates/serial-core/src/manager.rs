@@ -10,7 +10,7 @@
 //! - Received bytes are batched ([`FLUSH_INTERVAL`], [`MAX_BATCH`]) so a fast
 //!   device produces a few events per frame instead of thousands.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
